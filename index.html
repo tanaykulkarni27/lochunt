@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Location Tracker</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f5f7fb;
+      }
+
+      .card {
+        width: min(90vw, 420px);
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 14px;
+      }
+
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        margin-bottom: 12px;
+      }
+
+      button {
+        width: 100%;
+        padding: 10px;
+        border: 0;
+        border-radius: 8px;
+        background: #0f766e;
+        color: #fff;
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      button:disabled {
+        background: #94a3b8;
+        cursor: not-allowed;
+      }
+
+      pre {
+        margin-top: 12px;
+        background: #0f172a;
+        color: #e2e8f0;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 12px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Send Your Location</h1>
+      <label for="user">Username</label>
+      <input id="user" placeholder="Enter username" />
+      <button id="sendBtn">Send My Location</button>
+      <pre id="status">Waiting...</pre>
+    </div>
+
+    <script>
+      const sendBtn = document.getElementById("sendBtn");
+      const userInput = document.getElementById("user");
+      const statusBox = document.getElementById("status");
+
+      function setStatus(data) {
+        statusBox.textContent =
+          typeof data === "string" ? data : JSON.stringify(data, null, 2);
+      }
+
+      sendBtn.addEventListener("click", () => {
+        const user = userInput.value.trim();
+        if (!user) {
+          setStatus("Please enter a username.");
+          return;
+        }
+
+        if (!navigator.geolocation) {
+          setStatus("Geolocation is not supported in this browser.");
+          return;
+        }
+
+        sendBtn.disabled = true;
+        setStatus("Getting location...");
+
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            try {
+              const payload = {
+                user,
+                longitude: position.coords.longitude,
+                latitude: position.coords.latitude,
+              };
+
+              const response = await fetch("/location", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+
+              const result = await response.json();
+
+              if (!response.ok) {
+                setStatus({ error: result.error || "Failed to send location" });
+                return;
+              }
+
+              setStatus(result);
+            } catch (error) {
+              setStatus("Network error while sending location.");
+            } finally {
+              sendBtn.disabled = false;
+            }
+          },
+          (error) => {
+            sendBtn.disabled = false;
+            setStatus(`Could not get location: ${error.message}`);
+          },
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      });
+    </script>
+  </body>
+</html>
