@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 
 const locationSchema = new mongoose.Schema(
   {
-    user: { type: String, required: true, index: true },
+    user: { type: String, required: true, unique: true, index: true },
     longitude: { type: Number, required: true },
     latitude: { type: Number, required: true },
   },
@@ -32,8 +32,9 @@ app.post("/location", async (req, res) => {
   try {
     await connectDB();
     const { user, longitude, latitude } = req.body || {};
+    const normalizedUser = typeof user === "string" ? user.trim() : "";
 
-    if (!user || typeof user !== "string") {
+    if (!normalizedUser) {
       return res.status(400).json({ error: "user (string) is required" });
     }
 
@@ -43,20 +44,28 @@ app.post("/location", async (req, res) => {
         .json({ error: "longitude and latitude must be numbers" });
     }
 
-    const saved = await Location.create({
-      user,
-      longitude,
-      latitude,
-    });
+    const saved = await Location.findOneAndUpdate(
+      { user: normalizedUser },
+      {
+        user: normalizedUser,
+        longitude,
+        latitude,
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      }
+    );
 
     const newEntry = {
       user: saved.user,
-      longitude: saved.longitude,
-      latitude: saved.latitude,
-      timestamp: saved.createdAt,
+      longitude,
+      latitude,
+      timestamp: saved.updatedAt,
     };
 
-    return res.status(201).json({
+    return res.status(200).json({
       message: "Location saved",
       data: newEntry,
     });
@@ -69,22 +78,22 @@ app.get("/user/:username", async (req, res) => {
   try {
     await connectDB();
     const username = req.params.username;
-    const docs = await Location.find({ user: username }).sort({ createdAt: 1 }).lean();
-    const userLocations = docs.map((doc) => ({
-      user: doc.user,
-      longitude: doc.longitude,
-      latitude: doc.latitude,
-      timestamp: doc.createdAt,
-    }));
-
-    if (userLocations.length === 0) {
+    const doc = await Location.findOne({ user: username }).lean();
+    if (!doc) {
       return res.status(404).json({ error: "User location not found" });
     }
 
+    const latest = {
+      user: doc.user,
+      longitude: doc.longitude,
+      latitude: doc.latitude,
+      timestamp: doc.updatedAt,
+    };
+
     return res.json({
       user: username,
-      latest: userLocations[userLocations.length - 1],
-      history: userLocations,
+      latest,
+      history: [latest],
     });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch user location" });
@@ -94,20 +103,13 @@ app.get("/user/:username", async (req, res) => {
 app.get("/users", async (req, res) => {
   try {
     await connectDB();
-    const users = await Location.aggregate([
-      { $sort: { createdAt: -1 } },
-      { $group: { _id: "$user", latest: { $first: "$$ROOT" } } },
-      {
-        $project: {
-          _id: 0,
-          user: "$latest.user",
-          latitude: "$latest.latitude",
-          longitude: "$latest.longitude",
-          timestamp: "$latest.createdAt",
-        },
-      },
-      { $sort: { user: 1 } },
-    ]);
+    const docs = await Location.find({}).sort({ user: 1 }).lean();
+    const users = docs.map((doc) => ({
+      user: doc.user,
+      latitude: doc.latitude,
+      longitude: doc.longitude,
+      timestamp: doc.updatedAt,
+    }));
 
     return res.json({ count: users.length, users });
   } catch (error) {
