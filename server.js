@@ -1,12 +1,21 @@
 const express = require("express");
-const fs = require("fs/promises");
 const path = require("path");
+const mongoose = require("mongoose");
+const connectDB = require("./db");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = process.env.VERCEL
-  ? path.join("/tmp", "locations.json")
-  : path.join(__dirname, "locations.json");
+
+const locationSchema = new mongoose.Schema(
+  {
+    user: { type: String, required: true, index: true },
+    longitude: { type: Number, required: true },
+    latitude: { type: Number, required: true },
+  },
+  { timestamps: true }
+);
+
+const Location = mongoose.models.Location || mongoose.model("Location", locationSchema);
 
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -19,31 +28,9 @@ app.get("/users-page", (req, res) => {
   res.sendFile(path.join(__dirname, "users.html"));
 });
 
-async function ensureDataFile() {
-  try {
-    await fs.access(DATA_FILE);
-  } catch {
-    await fs.writeFile(DATA_FILE, "[]", "utf8");
-  }
-}
-
-async function readLocations() {
-  await ensureDataFile();
-  const raw = await fs.readFile(DATA_FILE, "utf8");
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeLocations(data) {
-  await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
-}
-
 app.post("/location", async (req, res) => {
   try {
+    await connectDB();
     const { user, longitude, latitude } = req.body || {};
 
     if (!user || typeof user !== "string") {
@@ -56,16 +43,18 @@ app.post("/location", async (req, res) => {
         .json({ error: "longitude and latitude must be numbers" });
     }
 
-    const locations = await readLocations();
-    const newEntry = {
+    const saved = await Location.create({
       user,
       longitude,
       latitude,
-      timestamp: new Date().toISOString(),
-    };
+    });
 
-    locations.push(newEntry);
-    await writeLocations(locations);
+    const newEntry = {
+      user: saved.user,
+      longitude: saved.longitude,
+      latitude: saved.latitude,
+      timestamp: saved.createdAt,
+    };
 
     return res.status(201).json({
       message: "Location saved",
@@ -78,9 +67,15 @@ app.post("/location", async (req, res) => {
 
 app.get("/user/:username", async (req, res) => {
   try {
+    await connectDB();
     const username = req.params.username;
-    const locations = await readLocations();
-    const userLocations = locations.filter((item) => item.user === username);
+    const docs = await Location.find({ user: username }).sort({ createdAt: 1 }).lean();
+    const userLocations = docs.map((doc) => ({
+      user: doc.user,
+      longitude: doc.longitude,
+      latitude: doc.latitude,
+      timestamp: doc.createdAt,
+    }));
 
     if (userLocations.length === 0) {
       return res.status(404).json({ error: "User location not found" });
@@ -98,19 +93,21 @@ app.get("/user/:username", async (req, res) => {
 
 app.get("/users", async (req, res) => {
   try {
-    const locations = await readLocations();
-    const latestByUser = new Map();
-
-    for (const item of locations) {
-      latestByUser.set(item.user, item);
-    }
-
-    const users = Array.from(latestByUser.values()).map((item) => ({
-      user: item.user,
-      latitude: item.latitude,
-      longitude: item.longitude,
-      timestamp: item.timestamp,
-    }));
+    await connectDB();
+    const users = await Location.aggregate([
+      { $sort: { createdAt: -1 } },
+      { $group: { _id: "$user", latest: { $first: "$$ROOT" } } },
+      {
+        $project: {
+          _id: 0,
+          user: "$latest.user",
+          latitude: "$latest.latitude",
+          longitude: "$latest.longitude",
+          timestamp: "$latest.createdAt",
+        },
+      },
+      { $sort: { user: 1 } },
+    ]);
 
     return res.json({ count: users.length, users });
   } catch (error) {
@@ -119,9 +116,20 @@ app.get("/users", async (req, res) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-  });
+  connectDB()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`Server is running on http://localhost:${PORT}`);
+      });
+    })
+    .catch((error) => {
+      console.error("Failed to connect to MongoDB", error);
+      process.exit(1);
+    });
 }
+
+// app.listen(PORT, () => {
+//   console.log(`Server is running on http://localhost:${PORT}`);
+// });
 
 module.exports = app;
