@@ -4,8 +4,9 @@ const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-// const DATA_FILE = path.join(__dirname, "locations.json");
-const DATA_FILE = "./locations.json";
+const DATA_FILE = process.env.VERCEL
+  ? path.join("/tmp", "locations.json")
+  : path.join(__dirname, "locations.json");
 
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -117,8 +118,10 @@ app.get("/users", async (req, res) => {
   }
 });
 
-// app.listen(PORT, () => {
-//   console.log(`Server is running on http://localhost:${PORT}`);
-// });
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+  });
+}
 
 module.exports = app;
